@@ -8,7 +8,7 @@ use tui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{InputMode, App, get_entries};
+use crate::app::{InputMode, App};
 pub fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -68,11 +68,8 @@ where
     )
     .split(area);
 
-    let entries: Vec<ListItem> = app
-        .entries
-        .as_mut()
-        .unwrap()
-        .items
+    let entries: Vec<ListItem> = app.db
+        .get_entries()
         .iter()
         .map(|x| {
             let entry_id = x.clone().get_id();
