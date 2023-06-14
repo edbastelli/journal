@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::Deref};
 
-use rusqlite::{Connection, ffi::SQLITE_LAST_ERRNO};
+use rusqlite::{Connection};
 
 pub struct Db {
     filename: String,
@@ -9,9 +9,18 @@ pub struct Db {
 }
 
 #[derive(Clone)]
-struct Tag {
+pub struct Tag {
     id: u32,
     tag: String,
+}
+
+impl Tag {
+    pub fn new(tag: String) -> Self {
+        Tag {
+            id: 0,
+            tag
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -31,6 +40,17 @@ impl Entry {
 
     pub fn get_title(&self) -> String {
         self.title.clone()
+    }
+
+    pub fn new(title: String, content: String, tags: Option<Vec<Tag>>) -> Self {
+        Entry {
+            id: 0,
+            created_time: 0,
+            updated_time: 0,
+            title,
+            content,
+            tags
+        }
     }
 }
 
@@ -91,6 +111,23 @@ impl Db {
             "CREATE TRIGGER IF NOT EXISTS update_updated_time UPDATE OF entry_title, entry_content ON entries
             BEGIN
                 UPDATE entries SET entry_updated_time=strftime('%s', 'now') WHERE entry_id = entry_id;
+            END;",
+            (),
+        )?;
+        self.conn.execute(
+            "CREATE TRIGGER delete_deleted_entry_tags
+            AFTER DELETE ON entries
+            FOR EACH ROW
+            BEGIN
+                DELETE FROM entry_tags WHERE entry_id = OLD.entry_id;
+            END;",
+            (),
+        )?;
+        self.conn.execute(
+            "CREATE TRIGGER delete_unused_tags
+            AFTER DELETE ON entry_tags
+            BEGIN
+                DELETE FROM tags WHERE tag_id NOT IN (SELECT tag_id FROM entry_tags);
             END;",
             (),
         )?;
@@ -172,29 +209,63 @@ impl Db {
         }
     }
 
-    fn create_entry(&mut self, entry_title: &str, entry_content: &str, tags: Option<Vec<String>>) 
+    fn edit_entry(&mut self, entry: &mut Entry) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE entries SET entry_title = ?1, entry_content = ?2 WHERE entry_id = ?3",
+            (&entry.title, &entry.content, &entry.id),
+        )?;
+        if let Some(tags) = entry.tags.clone() {
+            self.conn.execute(
+                "DELETE FROM entry_tags WHERE entry_id = ?1",
+                (&entry.id,),
+            )?;
+            for mut tag in tags {
+                if let Ok(tag_id) = self.create_tag(&tag.tag) {
+                    tag.id = tag_id;
+                    self.conn.execute(
+                        "INSERT INTO entry_tags (entry_id, tag_id) VALUES (?1, ?2)",
+                        (&entry.id, &tag.id),
+                    )?;
+                }
+            }
+        }
+        self.update_entries()?;
+        Ok(())
+    }
+
+    // fn create_entry(&mut self, entry_title: &str, entry_content: &str, tags: Option<Vec<String>>) 
+    fn create_entry(&mut self, entry: &mut Entry) // -> Result<(), rusqlite::Error> {
             -> Result<(), rusqlite::Error> {
         // let conn = Connection::open(&self.filename)?;
         self.conn.execute(
             "INSERT INTO entries (entry_title, entry_content)
             VALUES (?1, ?2)",
-            (&entry_title, &entry_content),
+            (&entry.title, &entry.content),
         )?;
-        let entry_id = self.conn.last_insert_rowid();
-        if let Some(tvec) = tags {
-            for tag in tvec {
+        entry.id = self.conn.last_insert_rowid() as u32;
+        if let Some(tvec) = entry.tags.clone() {
+            for mut tag in tvec {
                 // self.conn.execute(
                 //     "INSERT INTO tags (tag) values (?1)",
                 //     (&tag,),
                 // )?;
                 // let tag_id = self.conn.last_insert_rowid();
-                let tag_id = self.create_tag(&tag)?;
+                tag.id = self.create_tag(&tag.tag)?;
                 self.conn.execute(
                     "INSERT INTO entry_tags (entry_id, tag_id) VALUES (?1, ?2)",
-                    (&entry_id, &tag_id)
+                    (&entry.id, &tag.id)
                 )?;
             }
         }
+        self.update_entries()?;
+        Ok(())
+    }
+
+    fn delete_entry(&mut self, entry: &Entry) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "DELETE FROM entries WHERE entry_id = ?1",
+            (&entry.id,),
+        )?;
         self.update_entries()?;
         Ok(())
     }
@@ -205,25 +276,31 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn prep_test(filename: &str) -> Db {
+        match fs::remove_file(filename) {
+            Ok(()) => println!("removed {}", filename),
+            Err(e) => println!("{}", e),
+        }
+        let db = Db::new(filename);
+        db.initialize_db().unwrap();
+        db
+    }
+
     #[test]
     fn basic_db_function() {
-        let file = "test.db";
-        // match fs::remove_file(file) {
-        //     Ok(()) => println!("removed {}", file),
-        //     Err(e) => println!("{}", e),
-        // }
-        let mut db = Db::new(file);
-        db.initialize_db().unwrap();
-        let title = "Test1";
-        let content = "Test content";
-        let tags = Some(vec!["foo".to_string(), "bar".to_string()]);
-        db.create_entry(title, content, tags.clone()).unwrap();
+        let mut db = prep_test("test.db");
+        let mut entry = Entry::new(
+            "Test1".to_string(),
+            "Test Content".to_string(),
+            Some(vec![Tag::new("foo".to_string()), Tag::new("bar".to_string())]),
+        );
+        db.create_entry(&mut entry).unwrap();
         db.update_entries().unwrap();
-        assert_eq!(db.entries[0].title, title);
-        assert_eq!(db.entries[0].content, content);
+        assert_eq!(db.entries[0].title, "Test1".to_string());
+        assert_eq!(db.entries[0].content, "Test Content".to_string());
         assert_eq!(
             db.entries[0].tags.as_ref().unwrap().iter().map(|t| t.clone().tag).collect::<Vec<String>>(), 
-            tags.unwrap()
+            entry.tags.unwrap().iter().map(|t| t.clone().tag).collect::<Vec<String>>()
         );
         db.conn.close().unwrap();
         
@@ -231,21 +308,43 @@ mod tests {
 
     #[test]
     fn test_insert_tag() {
-        let file = "test2.db";
-        // match fs::remove_file(file) {
-        //     Ok(()) => println!("removed {}", file),
-        //     Err(e) => println!("{}", e),
-        // }
-        let mut db = Db::new(file);
-        db.initialize_db().unwrap();
+        let mut db = prep_test("test2.db");
         let x = db.create_tag("foo").unwrap();
         assert_eq!(x, 1);
         let y = db.create_tag("bar").unwrap();
         assert_eq!(y, 2);
-        // let t: u32 = db.conn.query_row("select tag_id from tags where tag = '?1'", ("foo",), |r| r.get(0)).unwrap();
-        // assert_eq!(t,1);
         let z = db.create_tag("foo").unwrap();
         assert_eq!(z, 1);
         db.conn.close().unwrap();
+    }
+
+    #[test]
+    fn test_edit_entry() {
+        let mut db = prep_test("test3.db");
+        let mut entry = Entry::new(
+            "Title!!".to_string(), 
+            "content!!".to_string(), 
+            Some(vec![Tag::new("Turkey".to_string()), Tag::new("Cheese".to_string())]));
+        db.create_entry(&mut entry).unwrap();
+        entry.title = "new title!!".to_string();
+        let newtags = Some(vec![Tag::new("chicken".to_string()), Tag::new("salad".to_string())]);
+        entry.tags = newtags;
+        db.edit_entry(&mut entry).unwrap();
+        assert_eq!(db.get_entries()[0].title, "new title!!".to_string());
+        assert_eq!(db.get_entries()[0].tags.as_ref().unwrap()[0].tag, "chicken".to_string());
+    }
+    
+    #[test]
+    fn test_delete_entry() {
+        let mut db = prep_test("test4.db");
+        let mut entry = Entry::new(
+            String::from("TITLE"),
+            String::from("CONTENT"),
+            Some(vec![Tag::new(String::from("DELETE")), Tag::new(String::from("ME"))])
+        );
+        db.create_entry(&mut entry).unwrap();
+        assert_eq!(db.get_entries()[0].tags.as_ref().unwrap().len(), 2);
+        db.delete_entry(&entry).unwrap();
+        assert_eq!(db.get_entries().len(), 0);
     }
 }
