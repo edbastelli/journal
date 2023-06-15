@@ -115,7 +115,7 @@ impl Db {
             (),
         )?;
         self.conn.execute(
-            "CREATE TRIGGER delete_deleted_entry_tags
+            "CREATE TRIGGER IF NOT EXISTS delete_deleted_entry_tags
             AFTER DELETE ON entries
             FOR EACH ROW
             BEGIN
@@ -124,7 +124,7 @@ impl Db {
             (),
         )?;
         self.conn.execute(
-            "CREATE TRIGGER delete_unused_tags
+            "CREATE TRIGGER IF NOT EXISTS delete_unused_tags
             AFTER DELETE ON entry_tags
             BEGIN
                 DELETE FROM tags WHERE tag_id NOT IN (SELECT tag_id FROM entry_tags);

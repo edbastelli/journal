@@ -1,6 +1,6 @@
 use crossterm::event::{Event, self, KeyCode};
 use tui::{backend::Backend, Terminal, widgets::ListState};
-use crate::db::Db;
+use journaldb::Db;
 
 use crate::ui::ui;
 

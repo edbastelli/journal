@@ -1,6 +1,5 @@
 mod app;
 mod ui;
-mod db;
 
 use app::{run_app, App};
 /// A simple example demonstrating how to handle user input. This is
