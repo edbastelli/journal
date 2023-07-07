@@ -23,6 +23,26 @@ impl Tag {
     }
 }
 
+impl From<String> for Tag {
+    fn from(t: String) -> Self {
+        Tag::new(t)
+    }
+}
+
+// fn assemble_tags(tags: Vec<&str>) -> Option<Vec<Tag>> {
+    // let tags = tags.iter().map(|&t| {
+        // Tag::new(String::from(t))
+    // }).collect::<Vec<Tag>>();
+    // let tags: Option<Vec<Tag>>= if tags.len() > 0 {
+        // Some(tags)
+    // }
+    // else {
+        // None
+    // };
+    // return tags
+
+// }
+
 #[derive(Clone)]
 pub struct Entry {
     id: u32,
@@ -234,7 +254,7 @@ impl Db {
     }
 
     // fn create_entry(&mut self, entry_title: &str, entry_content: &str, tags: Option<Vec<String>>) 
-    fn create_entry(&mut self, entry: &mut Entry) // -> Result<(), rusqlite::Error> {
+    pub fn create_entry(&mut self, entry: &mut Entry) // -> Result<(), rusqlite::Error> {
             -> Result<(), rusqlite::Error> {
         // let conn = Connection::open(&self.filename)?;
         self.conn.execute(
@@ -261,13 +281,22 @@ impl Db {
         Ok(())
     }
 
-    fn delete_entry(&mut self, entry: &Entry) -> Result<(), rusqlite::Error> {
+    pub fn delete_entry(&mut self, entry: &Entry) -> Result<(), rusqlite::Error> {
         self.conn.execute(
             "DELETE FROM entries WHERE entry_id = ?1",
             (&entry.id,),
         )?;
         self.update_entries()?;
         Ok(())
+    }
+
+    pub fn get_entry_by_id(&self, id: u32) -> Option<Entry> {
+        for entry in &self.entries {
+            if entry.id == id {
+                return Some(entry.clone());
+            }
+        }
+        None
     }
 }
 
