@@ -8,7 +8,7 @@ pub struct Db {
     entries: Vec<Entry>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Tag {
     id: u32,
     tag: String,
@@ -20,6 +20,10 @@ impl Tag {
             id: 0,
             tag
         }
+    }
+
+    pub fn get_tag(&self) -> String {
+        self.tag.clone()
     }
 }
 
@@ -60,6 +64,36 @@ impl Entry {
 
     pub fn get_title(&self) -> String {
         self.title.clone()
+    }
+
+    pub fn set_title(&mut self, title: String) {
+        self.title = title;
+    }
+
+    pub fn get_content(&self) -> String {
+        self.content.clone()
+    }
+
+    pub fn set_content(&mut self, content: String) {
+        self.content = content;
+    }
+
+    pub fn get_tags(&self) -> Option<Vec<Tag>> {
+        self.tags.clone()
+    }
+
+    pub fn set_tags(&mut self, tags: Option<Vec<Tag>>) {
+        self.tags = tags;
+    }
+
+    pub fn get_created_time(&self) -> String {
+        let time = chrono::NaiveDateTime::from_timestamp_opt(self.created_time as i64, 0).unwrap();
+        time.format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+
+    pub fn get_updated_time(&self) -> String {
+        let time = chrono::NaiveDateTime::from_timestamp_opt(self.updated_time as i64, 0).unwrap();
+        time.format("%Y-%m-%d %H:%M:%S").to_string()
     }
 
     pub fn new(title: String, content: String, tags: Option<Vec<Tag>>) -> Self {
@@ -121,8 +155,8 @@ impl Db {
             "CREATE VIEW IF NOT EXISTS entries_w_tags AS SELECT entries.entry_id, entry_created_time, entry_updated_time, entry_title, 
                     entry_content, group_concat(tags.tag_id, ':') AS tags
                 FROM
-                    (entries JOIN entry_tags ON entries.entry_id = entry_tags.entry_id)
-                    JOIN tags ON entry_Tags.tag_id = tags.tag_id
+                    (entries LEFT JOIN entry_tags ON entries.entry_id = entry_tags.entry_id)
+                    LEFT JOIN tags ON entry_tags.tag_id = tags.tag_id
                 GROUP BY entries.entry_id;
             ",
             (),
@@ -175,26 +209,29 @@ impl Db {
     
         Ok(tags)
     }
-    
+
     pub fn update_entries(&mut self) -> Result<(), rusqlite::Error> {
         let tags = self.get_tags()?;
         let mut entries = Vec::new();
-        // let conn = Connection::open(&self.filename)?;
         let mut stmt = self.conn.prepare(
             "SELECT * FROM entries_w_tags"
         )?;
         let results = stmt.query_map((), |row| {
-            let entry_tags_db: String = row.get(5)?;
-            let entry_tags = entry_tags_db.split(':').map(|x| {
-                if let Ok(tag_id) = x.parse() {
-                    let tag = tags.get(&tag_id).unwrap().deref().clone();
-                    Some(tag)
-                }
-                else {
-                    None
-                }
-            }).collect::<Option<Vec<Tag>>>();
-    
+            let entry_tags: Option<Vec<Tag>> = match row.get::<usize, String>(5) {
+                Ok(entry_tags_db) => {
+                    let entry_tags = entry_tags_db.split(':').map(|x| {
+                        if let Ok(tag_id) = x.parse() {
+                            let tag = tags.get(&tag_id).unwrap().deref().clone();
+                            Some(tag)
+                        }
+                        else {
+                            None
+                        }
+                    }).collect::<Option<Vec<Tag>>>();
+                    entry_tags
+                },
+                Err(_) => None
+            };
             Ok(Entry {
                 id: row.get(0)?,
                 created_time: row.get(1)?,
@@ -211,7 +248,6 @@ impl Db {
         }
         self.entries = entries;
         Ok(())
-        
     }
 
     fn create_tag(&mut self, tag:&str) -> Result<u32, rusqlite::Error> {
@@ -229,16 +265,16 @@ impl Db {
         }
     }
 
-    fn edit_entry(&mut self, entry: &mut Entry) -> Result<(), rusqlite::Error> {
+    pub fn edit_entry(&mut self, entry: &mut Entry) -> Result<(), rusqlite::Error> {
         self.conn.execute(
             "UPDATE entries SET entry_title = ?1, entry_content = ?2 WHERE entry_id = ?3",
             (&entry.title, &entry.content, &entry.id),
         )?;
+        self.conn.execute(
+            "DELETE FROM entry_tags WHERE entry_id = ?1",
+            (&entry.id,),
+        )?;
         if let Some(tags) = entry.tags.clone() {
-            self.conn.execute(
-                "DELETE FROM entry_tags WHERE entry_id = ?1",
-                (&entry.id,),
-            )?;
             for mut tag in tags {
                 if let Ok(tag_id) = self.create_tag(&tag.tag) {
                     tag.id = tag_id;

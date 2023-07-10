@@ -1,13 +1,17 @@
 use std::error::Error;
 
 use clap::{command, Command, arg};
-use dialoguer::{Input, Editor};
-use journaldb::{Tag, Entry, Db};
+
+use journaldb::{Db};
+
+mod util;
+use crate::util::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut db = Db::new("journal.db");
     db.initialize_db()?;
     db.update_entries()?;
+
     let matches = command!()
     .propagate_version(true)
     .subcommand_required(true)
@@ -24,6 +28,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             .about("Delete an Entry")
             .arg(arg!([entry_id])),
     )
+    .subcommand(
+        Command::new("show")
+            .about("Show journal entry"),
+    )
+    .subcommand(
+        Command::new("edit")
+            .about("Edit journal entry"),
+    )
     .get_matches();
     match matches.subcommand() {
         Some(("create", _)) => create_journal_entry(&mut db),
@@ -38,61 +50,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }),
+        Some(("show", _)) => show_journal_entry(&db),
+        Some(("edit", _)) => edit_journal_entry(&mut db),
         _ => unreachable!("Exhausted list of subcommands and subcommand_required prevents 'None'"),
     }?;
     Ok(())
 }
 
-fn create_journal_entry(db: &mut Db) -> Result<(), Box<dyn Error>> {
-    let title: String = Input::new()
-        .with_prompt("Enter entry_title")
-        .with_initial_text(format!("{} Entry", chrono::offset::Local::now().format("%d-%m-%Y")))
-        .interact_text()?;
-
-    if let Some(content) = Editor::new().edit("Enter entry content")? {
-        let tags: Vec<Tag> = Input::<String>::new()
-            .with_prompt("Enter tags separated by comma")
-            .interact_text()?
-            .split(',')
-            .map(|t| {
-                Tag::new(String::from(t))
-            }).collect();
-        let tags = if tags.len() > 0 {
-            Some(tags)
-        }    
-        else {
-            None
-        };
-
-        let mut entry = Entry::new(
-            title,
-            content,
-            tags,
-        );
-
-        db.create_entry(&mut entry)?;
-    } 
-
-    Ok(())
-
-}
-
-fn print_journal_entries(db: &mut Db) -> Result<(), Box<dyn Error>> {
-    let entries = db.get_entries();
-    for entry in entries {
-        println!("{} - {}", entry.get_id(), entry.get_title());
-    }
-
-    Ok(())
-}
-
-fn delete_journal_entry(db: &mut Db, entry_id: u32) -> Result<(), Box<dyn Error>> {
-    if let Some(entry ) = db.get_entry_by_id(entry_id) {
-        db.delete_entry(& entry)?;
-        println!("Entry [{} - {}] deleted", entry.get_id(), entry.get_title());
-    }
-    else {
-        println!("Entry with id {} not found", entry_id);
-    }
-    Ok(())
-}
